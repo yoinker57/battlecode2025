@@ -25,7 +25,7 @@ This is the Battlecode 2025 Python scaffold, containing an `examplefuncsplayer`.
 You are free to directly edit `examplefuncsplayer`.
 However, we recommend you make a new bot by copying `examplefuncsplayer` to a new package (folder) under the `src` folder.
 
-### Useful Commands
+### Useful Commands (You need to run them in python directory!)
 
 - `python run.py run`
     Runs a game with default settings. Use `--p1`, `--p2` to use different players, and `--maps` to use different maps.
