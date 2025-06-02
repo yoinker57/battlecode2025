@@ -8,12 +8,15 @@ from battlecode25.stubs import *
 
 class MessageType(IntEnum):
     SAVE_CHIPS = 0
+    CREATE_MOPPER = 1
+    DEFEND = 2
 
 class RobotState(IntEnum):
     STARTING = 0
     PAINTING_PATTERN = 1
     EXPLORING = 2
     ATTACKING = 3
+    DEFENDING = 4
 
 # Globals
 turn_count = 0
@@ -59,6 +62,9 @@ turns_without_attack = 0
 
 moving_direction = Direction.NORTH
 moving_turns = 10
+create_mopper = False
+mopper_cooldown = 0
+defending_turns = 20
 
 def turn():
     global paint_tower_pattern, money_tower_pattern
@@ -114,25 +120,31 @@ def is_within_pattern(ruin_loc, paint_loc):
             ruin_loc != paint_loc)
 
 def run_tower():
-    global save_turns
-    global should_save
+    global save_turns, should_save, create_mopper, mopper_cooldown
 
     if save_turns == 0:
         # If we have no save turns remaining, start building robots
         should_save = False
 
         # Pick a direction to build in.
-        dir = directions[random.randint(0, len(directions) - 1)]
+        free_directions = [d for d in directions if is_location_occupied(get_location().add(d)) == False]
+        dir = free_directions[random.randint(0, len(free_directions) - 1)]
         next_loc = get_location().add(dir)
 
         # Pick a random robot type to build.
         robot_type = random.randint(0, 6)
-        if (robot_type <= 5 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
-            build_robot(UnitType.SOLDIER, next_loc) #for now, always build soldiers
-            log("BUILT A SOLDIER")
-        elif robot_type == 6 and can_build_robot(UnitType.MOPPER, next_loc) and get_round_num() > 1000:
+        if create_mopper == True and can_build_robot(UnitType.MOPPER, next_loc):
+            create_mopper = False
             build_robot(UnitType.MOPPER, next_loc)
-            log("BUILT A MOPPER")
+            if can_send_message(next_loc):
+                send_message(next_loc, int(MessageType.DEFEND))
+        elif create_mopper == False:
+            if (robot_type <= 5 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
+                build_robot(UnitType.SOLDIER, next_loc) 
+                log("BUILT A SOLDIER")
+            elif robot_type == 6 and can_build_robot(UnitType.MOPPER, next_loc) and get_round_num() > 1000:
+                build_robot(UnitType.MOPPER, next_loc)
+                log("BUILT A MOPPER")
         # if robot_type == 2 and can_build_robot(UnitType.SPLASHER, next_loc):
         #     set_indicator_string("SPLASHER NOT IMPLEMENTED YET")
         #     #build_robot(RobotType.SPLASHER, next_loc)
@@ -152,8 +164,18 @@ def run_tower():
             broadcast_message(int(MessageType.SAVE_CHIPS))
             save_turns = 75
             should_save = True
+        if not create_mopper and m.get_bytes() == int(MessageType.CREATE_MOPPER) and get_type().get_base_type() == UnitType.LEVEL_ONE_PAINT_TOWER:
+            create_mopper = True
+            mopper_cooldown = 10
 
     enemy_robots = sense_nearby_robots(team=get_team().opponent())
+
+    if len(enemy_robots) > 1 and mopper_cooldown == 0:
+        if (get_type().get_base_type() == UnitType.LEVEL_ONE_PAINT_TOWER):
+            create_mopper = True
+            mopper_cooldown = 10
+        else:   
+            broadcast_message(int(MessageType.CREATE_MOPPER))
     
     # Count how many enemies are adjacent to the tower
     adjacent_enemies = [enemy for enemy in enemy_robots if get_location().is_adjacent_to(enemy.location)]
@@ -172,20 +194,52 @@ def run_tower():
         # Upgrade the tower if we have enough chips
         upgrade_tower(get_location())
 
+    if mopper_cooldown > 0 and create_mopper == False:
+        mopper_cooldown -= 1
+
 def run_paint_pattern():
     global painting_turns, turns_without_attack, state
 
-    # Move in a circle around the ruin every 3 turns after painting some tiles
     if painting_turns % 3 == 0:
-        to_ruin = get_location().direction_to(painting_ruin_loc)
-        tangent = to_ruin.rotate_right().rotate_right()
-        distance = get_location().distance_squared_to(painting_ruin_loc)
+        adjacent_offsets = [direction for direction in Direction if direction != Direction.CENTER]
+        # Step 1: Generate absolute positions of the 4 adjacent tiles
+        adjacent_tiles = [
+            painting_ruin_loc.add(offset) for offset in adjacent_offsets
+        ]
 
-        if distance > 4:
-            tangent = tangent.rotate_left()
+        # Step 2: Find which adjacent tile the bot is closest to
+        my_loc = get_location()
+        distances = [my_loc.distance_squared_to(tile) for tile in adjacent_tiles]
 
-        if can_move(tangent):
-            move(tangent)
+        
+        # Bot is not on an adjacent tile — move to the nearest one
+        nearest_index = distances.index(minimum(distances))
+        if minimum(distances) > 0:
+            target = adjacent_tiles[nearest_index]
+            direction = my_loc.direction_to(target)
+            if can_move(direction):
+                move(direction)
+
+        # Step 3: If we're on an adjacent tile, move to the next one in the cycle
+        if minimum(distances) == 0:
+            current_index = distances.index(0)
+            next_index = (current_index + 1) % len(adjacent_tiles)
+            next_tile = adjacent_tiles[next_index]
+            direction = my_loc.direction_to(next_tile)
+            if can_move(direction):
+                move(direction)
+
+    # Move in a circle around the ruin every 3 turns after painting some tiles
+    # if painting_turns % 3 == 0:
+    #     to_ruin = get_location().direction_to(painting_ruin_loc)
+    #     tangent = to_ruin.rotate_right().rotate_right()
+    #     distance = get_location().distance_squared_to(painting_ruin_loc)
+
+    #     if distance > 4:
+    #         tangent = tangent.rotate_left()
+
+    #     if can_move(tangent):
+    #         move(tangent)
 
     # Use helper functions to determine primary/secondary and paint a tile if possible
     if is_action_ready():
@@ -205,21 +259,23 @@ def run_paint_pattern():
 
         if not attacked:
             turns_without_attack += 1
-
     # Check if we can build the tower or if the pattern appears to be done
     if can_complete_tower_pattern(painting_tower_type, painting_ruin_loc):
         complete_tower_pattern(painting_tower_type, painting_ruin_loc)
         state = RobotState.EXPLORING
-    elif turns_without_attack > 3:
+    elif turns_without_attack > 5:
         state = RobotState.EXPLORING
 
 def run_soldier():
     global state, painting_tower_type, painting_turns, turns_without_attack, painting_ruin_loc, target_enemy_ruin, moving_direction, moving_turns
 
     if state == RobotState.STARTING:
+        current_tile = sense_map_info(get_location())
+        if not current_tile.get_paint().is_ally() and can_attack(get_location()):
+            attack(get_location())
         infos = sense_nearby_ruins()
         moving_direction = get_location().direction_to(infos[0]).opposite()
-        if get_round_num() > 200 and get_id() % 2 == 1:
+        if get_id() % 2 == 1:
             state = RobotState.ATTACKING
         else:
             state = RobotState.EXPLORING
@@ -241,8 +297,8 @@ def run_soldier():
                     cur_ruin = tile
 
         if cur_ruin is not None:
-            if cur_dist > 4:
-                bug0(cur_ruin.get_map_location())
+            if cur_dist > 1:
+                bug2(cur_ruin.get_map_location())
             else:
                 state = RobotState.PAINTING_PATTERN
                 painting_tower_type = get_new_tower_type()
@@ -258,18 +314,19 @@ def run_soldier():
             if can_move(moving_direction):
                 move(moving_direction)
             else:
+                bug2(get_location().add(moving_direction).add(moving_direction).add(moving_direction))
                 # If we can't move in the current direction, try to turn
-                local_direction = moving_direction
-                local_direction2 = moving_direction
-                for i in range(3):
-                    local_direction = local_direction.rotate_left()
-                    local_direction2 = local_direction2.rotate_right()
-                    if can_move(local_direction):
-                        move(local_direction)
-                        break
-                    if can_move(local_direction2):
-                        move(local_direction2)
-                        break
+                # local_direction = moving_direction
+                # local_direction2 = moving_direction
+                # for i in range(3):
+                #     local_direction = local_direction.rotate_left()
+                #     local_direction2 = local_direction2.rotate_right()
+                #     if can_move(local_direction):
+                #         move(local_direction)
+                #         break
+                #     if can_move(local_direction2):
+                #         move(local_direction2)
+                #         break
             current_tile = sense_map_info(get_location())
             if not current_tile.get_paint().is_ally() and can_attack(get_location()):
                 attack(get_location())
@@ -318,27 +375,28 @@ def run_soldier():
 
             set_indicator_dot(target_enemy_ruin, 0, 255, 0)
             set_indicator_string(f"Moving to enemy ruin at {target_enemy_ruin}")
-    if moving_turns == 0:
-        moving_direction = moving_direction.rotate_right()
-        moving_turns = 10
-    if can_move(moving_direction):
-        move(moving_direction)
-        moving_turns -= 1
-    else:
-        # If we can't move in the current direction, try to turn
-        local_direction = moving_direction
-        local_direction2 = moving_direction
-        for i in range(3):
-            local_direction = local_direction.rotate_left()
-            local_direction2 = local_direction2.rotate_right()
-            if can_move(local_direction):
-                move(local_direction)
-                moving_turns -= 1
-                break
-            if can_move(local_direction2):
-                move(local_direction2)
-                moving_turns -= 1
-                break
+    if state != RobotState.PAINTING_PATTERN:
+        if moving_turns == 0:
+            moving_direction = moving_direction.rotate_right()
+            moving_turns = 10
+        if can_move(moving_direction):
+            move(moving_direction)
+            moving_turns -= 1
+        else:
+            # If we can't move in the current direction, try to turn
+            local_direction = moving_direction
+            local_direction2 = moving_direction
+            for i in range(3):
+                local_direction = local_direction.rotate_left()
+                local_direction2 = local_direction2.rotate_right()
+                if can_move(local_direction):
+                    move(local_direction)
+                    moving_turns -= 1
+                    break
+                if can_move(local_direction2):
+                    move(local_direction2)
+                    moving_turns -= 1
+                    break
 
     current_tile = sense_map_info(get_location())
     if not current_tile.get_paint().is_ally() and can_attack(get_location()):
@@ -346,7 +404,16 @@ def run_soldier():
 
 
 def run_mopper():
-    global should_save, moving_direction, moving_turns
+    global should_save, moving_direction, moving_turns, state, defending_turns
+
+    messages = read_messages()
+    for m in messages:
+        log(f"Tower received message: '#{m.get_sender_id()}: {m.get_bytes()}'")
+
+        if m.get_bytes() == int(MessageType.DEFEND):
+            state = RobotState.DEFENDING
+            
+
     if should_save and len(known_towers) > 0:
         # Move to first known tower if we are saving
         dir = get_location().direction_to(known_towers[0])
@@ -354,27 +421,49 @@ def run_mopper():
         if can_move(dir):
             move(dir)
 
+    if state == RobotState.DEFENDING:
+        defending_turns -= 1
+
+        # Check for nearby enemies and attack them
+        enemy_robots = sense_nearby_robots(team=get_team().opponent())
+        if len(enemy_robots) > 0:
+            for enemy in enemy_robots:
+                dir = get_location().direction_to(enemy.get_location())
+                if can_move(dir):
+                    move(dir)
+                if can_attack(enemy.location):
+                    attack(enemy.location)
+                    break
+    
+    if defending_turns <= 0:
+        state = RobotState.EXPLORING
     if moving_turns == 0:
         moving_direction = moving_direction.rotate_right()
         moving_turns = 10
+    # if can_move(moving_direction):
+    #     move(moving_direction)
+    #     moving_turns -= 1
+    # else:
+    #     # If we can't move in the current direction, try to turn
+    #     local_direction = moving_direction
+    #     local_direction2 = moving_direction
+    #     for i in range(3):
+    #         local_direction = local_direction.rotate_left()
+    #         local_direction2 = local_direction2.rotate_right()
+    #         if can_move(local_direction):
+    #             move(local_direction)
+    #             moving_turns -= 1
+    #             break
+    #         if can_move(local_direction2):
+    #             move(local_direction2)
+    #             moving_turns -= 1
+    #             break
+
     if can_move(moving_direction):
         move(moving_direction)
         moving_turns -= 1
     else:
-        # If we can't move in the current direction, try to turn
-        local_direction = moving_direction
-        local_direction2 = moving_direction
-        for i in range(3):
-            local_direction = local_direction.rotate_left()
-            local_direction2 = local_direction2.rotate_right()
-            if can_move(local_direction):
-                move(local_direction)
-                moving_turns -= 1
-                break
-            if can_move(local_direction2):
-                move(local_direction2)
-                moving_turns -= 1
-                break
+        bug2(get_location().add(moving_direction).add(moving_direction).add(moving_direction))
 
     dir = directions[random.randint(0, len(directions) - 1)]
     next_loc = get_location().add(dir)
@@ -615,3 +704,13 @@ def get_direction_to(a, b):
     dx = b.x - a.x
     dy = b.y - a.y
     return (sign(dx), sign(dy))
+
+def minimum(lst):
+    if not lst:
+        return None
+    
+    min_val = lst[0]
+    for val in lst[1:]:
+        if val < min_val:
+            min_val = val
+    return min_val
