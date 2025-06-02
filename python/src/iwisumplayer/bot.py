@@ -197,8 +197,8 @@ def run_tower():
 
     if len(adjacent_enemies) >= 2:
         # Use AoE attack if 2 or more enemies are adjacent
-        if can_attack():
-            attack()
+        if can_attack(adjacent_enemies[0].location):
+            attack(adjacent_enemies[0].location, use_secondary_color=True)
     else:
         for enemy in enemy_robots:
             if can_attack(enemy.location):
@@ -278,7 +278,7 @@ def run_paint_pattern():
     if can_complete_tower_pattern(painting_tower_type, painting_ruin_loc):
         complete_tower_pattern(painting_tower_type, painting_ruin_loc)
         state = RobotState.EXPLORING
-    elif turns_without_attack > 5:
+    elif turns_without_attack > 7:
         state = RobotState.EXPLORING
 
 def run_soldier():
@@ -314,7 +314,7 @@ def run_soldier():
         
         moving_direction = get_location().direction_to(infos[0]).opposite()
         # Pomaluj kafelkę przy wieży, aby wieża mogła się komunikować z jednostkami
-        if not sense_map_info(get_location())[0].get_paint().is_ally():
+        if not sense_map_info(get_location()).get_paint().is_ally():
             if can_attack(get_location()):
                 attack(get_location())
         state = RobotState.WAITING

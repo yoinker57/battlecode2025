@@ -161,8 +161,8 @@ def run_tower():
 
     if len(adjacent_enemies) >= 2:
         # Use AoE attack if 2 or more enemies are adjacent
-        if can_attack():
-            attack()
+        if can_attack(adjacent_enemies[0].location):
+            attack(adjacent_enemies[0].location, use_secondary_color=True)
     else:
         for enemy in enemy_robots:
             if can_attack(enemy.location):
