@@ -3,8 +3,13 @@ from enum import IntEnum
 
 from battlecode25.stubs import *
 
-# This is an example bot written by the developers!
-# Use this to help write your own code, or run it against your bot to see how well you can do!
+# Ustawienie patternu wież dla wszystkich
+# Losowanie wytworzonego robota
+# Podstawowa komunikacja między wieżami
+# Zaawansowany atak wieży + jej ulepszanie
+# Ustalenie jednego kierunku dla jednego żołnierza przy jego inicjalizacji
+# Prymitywne omijanie przeszkody przez obrót
+# Dodanie moppera z losowymi atakami idącego w jednym kierunku
 
 class MessageType(IntEnum):
     SAVE_CHIPS = 0
@@ -35,13 +40,8 @@ is_messenger = False
 should_save = False
 save_turns = 0
 
-# Bug1 Variables
-is_tracing = False # also used in bug 2
-smallest_distance = 10000000
-closest_location = None
-tracing_dir = None
-
 # Bug2 Variables
+is_tracing = False
 prev_dest = MapLocation(100000, 100000)
 line = set()
 obstacle_start_dist = 0
@@ -216,17 +216,6 @@ def run_paint_pattern():
 
 def run_soldier():
     global state, painting_tower_type, painting_turns, turns_without_attack, painting_ruin_loc, target_enemy_ruin, moving_direction, moving_turns
-    # Odczytaj przychodzące wiadomości
-    messages = read_messages()
-    for m in messages:
-        int(inf)
-        log(f"Soldier received message: '#{m.get_sender_id()}: {m.get_bytes()}'")
-
-        # If we are not currently saving and we receive the save chips message, start saving
-        if not should_save and m.get_bytes() == int(MessageType.SAVE_CHIPS):
-            broadcast_message(int(MessageType.SAVE_CHIPS))
-            save_turns = 75
-            should_save = True
 
     if state == RobotState.STARTING:
         # Wybierz kierunek ruchu przeciwny od najbliższej wieży
@@ -260,7 +249,7 @@ def run_soldier():
 
         if cur_ruin is not None:
             if cur_dist > 4:
-                bug0(cur_ruin.get_map_location())
+                bug2(cur_ruin.get_map_location())
             else:
                 state = RobotState.PAINTING_PATTERN
                 painting_tower_type = get_new_tower_type()
@@ -269,10 +258,6 @@ def run_soldier():
                 painting_ruin_loc = cur_ruin.get_map_location()
 
         else:
-            # dir = random.choice(directions)
-            # next_loc = get_location().add(dir)
-            # if can_move(dir):
-            #     move(dir)
             if can_move(moving_direction):
                 move(moving_direction)
             else:
@@ -484,75 +469,7 @@ def update_enemy_robots():
             if can_send_message(ally.location):
                 send_message(ally.location, len(enemy_robots))
 
-#Bug 0
-def bug0(target):
-    # get direction from current location to target
-    dir = get_location().direction_to(target)
-    nextLoc = get_location().add(dir)
-
-    # try to move in target direction
-    if(can_move(dir)):
-        move(dir)
-
-    # keep turning left until we can move
-    for i in range(8):
-        dir = dir.rotate_left()
-        if can_move(dir):
-            move(dir)
-            break
-
-#Bug 1
-def bug1(target):
-    global is_tracing, smallest_distance, map_location, closest_location, tracing_dir
-
-    if not is_tracing:
-        # proceed as normal
-        dir = get_location().direction_to(target)
-        next_loc = get_location().add(dir)
-
-        # try to move in target direction
-        if can_move(dir):
-            move(dir)
-        else:
-            is_tracing = True
-            tracing_dir = dir
-    else:
-        # in tracing mode
-
-        # need a stopping condition - this will be when we see the closest location again
-        if closest_location is not None and get_location() == closest_location: 
-            # reset global tracing variables
-            is_tracing = False
-            smallest_distance = 10000000
-            closest_location = None
-            tracing_dir = None
-        else:
-            # continue tracing
-
-            # update closest_location and smallest_distance
-            dist_to_target = get_location().distance_squared_to(target)
-            if dist_to_target < smallest_distance:
-                smallest_distance = dist_to_target
-                closest_location = get_location()
-            
-            # go along perimeter of obstacle
-            if can_move(tracing_dir):
-                # move forward & try to turn right
-                move(tracing_dir)
-                tracing_dir = tracing_dir.rotate_right()
-                tracing_dir = tracing_dir.rotate_right()
-            else:
-                # turn left because we can't move forward; keep turning left until we can move again
-                for i in range(8):
-                    tracing_dir = tracing_dir.rotate_left()
-                    if can_move(tracing_dir):
-                        move(tracing_dir)
-                        tracing_dir = tracing_dir.rotate_right()
-                        tracing_dir = tracing_dir.rotate_right()
-                        break
-            
 #Bug 2
-
 def bug2(target):
     global prev_dest, line, is_tracing, obstacle_start_dist, tracing_dir
 
@@ -583,99 +500,6 @@ def bug2(target):
                 break
             else:
                 tracing_dir = tracing_dir.rotate_left()
-
-cached_path = []
-path_index = 1
-path_target = None
-
-DIRECTIONS = [
-    Direction.NORTH, Direction.NORTH_EAST, Direction.EAST, Direction.SOUTH_EAST,
-    Direction.SOUTH, Direction.SOUTH_WEST, Direction.WEST, Direction.NORTH_WEST
-]
-
-def A_star(target):
-    """A* pathfinding algorithm to find a path from the current location to a target location."""
-    # This is a placeholder for an A* implementation.
-    # You would need to implement the A* algorithm here to find the shortest path.
-    start = get_location()
-    
-    open_list = []
-    came_from = {}
-    g_score = {}
-    f_score = {}
-    
-    def heuristic(a, b):
-        return max(abs(a.x - b.x), abs(a.y - b.y))
-    
-    open_list.append(start)
-    g_score[start] = 0
-    f_score[start] = heuristic(start, target)
-    
-    for _ in range(500):
-        if not open_list:
-            break
-
-        current = min(open_list, key=lambda loc: f_score.get(loc, 1 << 30))
-
-        if current == target:
-            return reconstruct_path(came_from, current)
-
-        open_list.remove(current)
-
-        for dir in DIRECTIONS:
-            neighbor = current.add(dir)
-            if not can_move(dir):
-                continue
-
-            tentative_g = g_score.get(current, 1 << 30) + 1
-
-            if tentative_g < g_score.get(neighbor, 1 << 30):
-                came_from[neighbor] = current
-                g_score[neighbor] = tentative_g
-                f_score[neighbor] = tentative_g + heuristic(neighbor, target)
-                if neighbor not in open_list:
-                    open_list.append(neighbor)
-
-    return None
-
-
-def reconstruct_path(came_from, current):
-    path = [current]
-    while current in came_from:
-        current = came_from[current]
-        path.append(current)
-    path.reverse()
-    return path
-
-
-def move_to_target(target):
-    """Wrapper to use cached path or compute a new one."""
-    global cached_path, path_index, path_target
-
-    current = get_location()
-
-    if cached_path == [] or target != path_target or path_index >= len(cached_path):
-        cached_path = A_star(current, target)
-        path_target = target
-        path_index = 1  # start from next step
-
-    if cached_path is None:
-        # fallback if pathfinding failed
-        bug1(target)
-        return
-
-    if path_index < len(cached_path):
-        next_loc = cached_path[path_index]
-        dir = current.direction_to(next_loc)
-        if can_move(dir):
-            move(dir)
-            path_index += 1
-        else:
-            # blocked — fallback and reset
-            cached_path = []
-            path_index = 1
-            bug1(target)
-
 
 def create_line(a, b):
     locs = set()

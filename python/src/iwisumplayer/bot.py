@@ -278,7 +278,7 @@ def run_paint_pattern():
     if can_complete_tower_pattern(painting_tower_type, painting_ruin_loc):
         complete_tower_pattern(painting_tower_type, painting_ruin_loc)
         state = RobotState.EXPLORING
-    elif turns_without_attack > 7:
+    elif turns_without_attack > 6:
         state = RobotState.EXPLORING
 
 def run_soldier():
