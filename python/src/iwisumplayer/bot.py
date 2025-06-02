@@ -2,18 +2,18 @@ import random
 from enum import IntEnum
 
 from battlecode25.stubs import *
-
-# This is an example bot written by the developers!
-# Use this to help write your own code, or run it against your bot to see how well you can do!
+from bytes import combine_bytes, split_to_bytes
 
 class MessageType(IntEnum):
-    SAVE_CHIPS = 0
+    SAVE_CHIPS = 1
 
 class RobotState(IntEnum):
-    STARTING = 0
-    PAINTING_PATTERN = 1
-    EXPLORING = 2
-    ATTACKING = 3
+    STARTING = 1
+    WAITING = 2
+    PAINTING = 3
+    PAINTING_PATTERN = 4
+    EXPLORING = 5
+    ATTACKING = 6
 
 # Globals
 turn_count = 0
@@ -30,6 +30,8 @@ directions = [
 
 # Variables for communication
 known_towers = []
+walls_set = set()
+occupied_set = set()
 is_messenger = False
 should_save = False
 save_turns = 0
@@ -59,6 +61,13 @@ turns_without_attack = 0
 
 moving_direction = Direction.NORTH
 moving_turns = 10
+waiting_turns = 3
+
+# A* 
+
+cached_path = []
+path_index = 1
+path_target = None
 
 def turn():
     global paint_tower_pattern, money_tower_pattern
@@ -129,6 +138,12 @@ def run_tower():
         robot_type = random.randint(0, 6)
         if (robot_type <= 5 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
             build_robot(UnitType.SOLDIER, next_loc) #for now, always build soldiers
+            if get_round_num() > 200 and robot_type % 2 == 1:
+                robot_state = RobotState.ATTACKING
+            else:
+                robot_state = RobotState.EXPLORING
+            if can_send_message(next_loc):
+                send_message(next_loc, combine_bytes(255, 0, 0, int(robot_state)))
             log("BUILT A SOLDIER")
         elif robot_type == 6 and can_build_robot(UnitType.MOPPER, next_loc) and get_round_num() > 1000:
             build_robot(UnitType.MOPPER, next_loc)
@@ -145,7 +160,7 @@ def run_tower():
     # Read incoming messages
     messages = read_messages()
     for m in messages:
-        log(f"Tower received message: '#{m.get_sender_id()}: {m.get_bytes()}'")
+        log(f"Tower received message: '#{m.get_sender_id()}: {split_to_bytes(m.get_bytes())}'")
 
         # If we are not currently saving and we receive the save chips message, start saving
         if not should_save and m.get_bytes() == int(MessageType.SAVE_CHIPS):
@@ -214,15 +229,49 @@ def run_paint_pattern():
         state = RobotState.EXPLORING
 
 def run_soldier():
-    global state, painting_tower_type, painting_turns, turns_without_attack, painting_ruin_loc, target_enemy_ruin, moving_direction, moving_turns
+    global state, painting_tower_type, painting_turns, turns_without_attack, painting_ruin_loc, target_enemy_ruin, moving_direction, moving_turns, waiting_turns
+    global walls_set, occupied_set
+    
+    # Odczytaj przychodzące wiadomości
+    messages = read_messages()
+    for m in messages:
+        m_bytes = split_to_bytes(m.get_bytes())
+        log(f"Soldier received message: '#{m.get_sender_id()}: {m_bytes}'")
+        if m_bytes[0] == 255:
+            if state == RobotState.STARTING:
+                # Wybierz kierunek ruchu przeciwny od najbliższej wieży
+                infos = sense_nearby_ruins()
+                nearby_targets = sense_nearby_map_infos(get_location(), 5)
+                for target in nearby_targets:
+                    if target.is_wall():
+                        walls_set.add(target.get_map_location())
+
+                moving_direction = get_location().direction_to(infos[0]).opposite()
+                state = m_bytes[3]
+            if state == RobotState.WAITING:
+                state = m_bytes[3]
 
     if state == RobotState.STARTING:
+        # Wybierz kierunek ruchu przeciwny od najbliższej wieży
         infos = sense_nearby_ruins()
+        nearby_targets = sense_nearby_map_infos(get_location(), 5)
+        for target in nearby_targets:
+            if target.is_wall():
+                walls_set.add(target.get_map_location())
+        
         moving_direction = get_location().direction_to(infos[0]).opposite()
-        if get_round_num() > 200 and get_id() % 2 == 1:
-            state = RobotState.ATTACKING
-        else:
+        # Pomaluj kafelkę przy wieży, aby wieża mogła się komunikować z jednostkami
+        if not sense_nearby_map_infos(get_location(), 0)[0].get_paint().is_ally():
+            if can_attack(get_location()):
+                attack(get_location())
+        state = RobotState.WAITING
+    
+    if state == RobotState.WAITING:
+        waiting_turns -= 1
+        if waiting_turns <= 0:
+            # If we have waited long enough, start exploring
             state = RobotState.EXPLORING
+        return
 
     if state == RobotState.PAINTING_PATTERN:
         run_paint_pattern()
@@ -242,7 +291,7 @@ def run_soldier():
 
         if cur_ruin is not None:
             if cur_dist > 4:
-                bug0(cur_ruin.get_map_location())
+                bug1(cur_ruin.get_map_location())
             else:
                 state = RobotState.PAINTING_PATTERN
                 painting_tower_type = get_new_tower_type()
@@ -315,6 +364,7 @@ def run_soldier():
                             break
                 else:
                     bug2(target_enemy_ruin)
+                    # move_to_target(target_enemy_ruin)
 
             set_indicator_dot(target_enemy_ruin, 0, 255, 0)
             set_indicator_string(f"Moving to enemy ruin at {target_enemy_ruin}")
@@ -325,6 +375,9 @@ def run_soldier():
         move(moving_direction)
         moving_turns -= 1
     else:
+        map_height = get_map_height()
+        map_width = get_map_width()
+        # on_the_map()
         # If we can't move in the current direction, try to turn
         local_direction = moving_direction
         local_direction2 = moving_direction
@@ -566,6 +619,69 @@ def bug2(target):
             else:
                 tracing_dir = tracing_dir.rotate_left()
 
+def update_occupied_set():
+    occupied = set()
+    center = get_location()
+    nearby_locs = sense_nearby_map_infos(center, 5)
+
+    for loc in nearby_locs:
+        loc = loc.get_map_location()
+        if not can_sense_location(loc):
+            continue
+
+        if is_location_occupied(loc):
+            occupied.add(loc)
+            continue
+
+        map_info = sense_map_info(loc)
+        if map_info.has_ruin():
+            occupied.add(loc)
+    return occupied
+
+def update_walls_set():
+    global walls_set
+    walls_set = set()
+    center = get_location()
+    nearby_locs = sense_nearby_map_infos(center, 5)
+
+    for loc in nearby_locs:
+        loc = loc.get_map_location()
+        if not can_sense_location(loc):
+            continue
+
+        map_info = sense_map_info(loc)
+        if map_info.is_wall():
+            walls_set.add(loc)
+
+from aStar import greedy_best_first
+
+def move_to_target(target):
+    global cached_path, path_index, path_target, walls_set, occupied_set
+
+    occupied_set = update_occupied_set()
+
+    if cached_path is None or path_index % 4 == 0 or path_target is None or path_target != target:
+        update_walls_set()
+        cached_path = greedy_best_first(get_location(), target, walls_set, occupied_set)
+        path_target = target
+        path_index = 0
+
+        if len(cached_path) == 0:
+            bug0(target)
+            return
+
+    if cached_path and path_index < len(cached_path):
+        next_loc = cached_path[path_index]
+        direction = get_location().direction_to(next_loc)
+        if can_move(direction):
+            move(direction)
+            path_index += 1
+        else:
+            cached_path = None
+            move_to_target(target)
+    else:
+        cached_path = None
+        
 def create_line(a, b):
     locs = set()
 
