@@ -500,15 +500,28 @@ def run_mopper():
         moving_turns -= 1
     else:
         bug2(get_location().add(moving_direction).add(moving_direction).add(moving_direction))
+    
+    flag = False
+    for dir in directions:
+        if not can_move(dir):
+            continue
+        isEnemyTile = sense_map_info(get_location().add(dir)).get_paint().is_enemy()
+        if isEnemyTile:
+            # If we are on an enemy tile, try to mop it
+            if can_mop_swing(dir):
+                mop_swing(dir)
+            elif can_attack(get_location().add(dir)):
+                attack(get_location().add(dir))
+            flag = True
+            break
+    
+    if not flag:
+        dir = random.choice(directions)
+        if can_mop_swing(dir):
+            mop_swing(dir)
+        if can_move(dir):
+            move(dir)
 
-    dir = directions[random.randint(0, len(directions) - 1)]
-    next_loc = get_location().add(dir)
-    if can_move(dir):
-        move(dir)
-    if can_attack(next_loc):
-        attack(next_loc)
-    elif can_mop_swing(dir):
-        mop_swing(dir)
 
     # We can also move our code into different methods or classes to better organize it!
     update_enemy_robots()
