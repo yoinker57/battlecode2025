@@ -150,7 +150,7 @@ def run_tower():
         elif create_mopper == False:
             if (robot_type <= 5 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
                 build_robot(UnitType.SOLDIER, next_loc) 
-                if get_round_num() > 200 and robot_type % 2 == 1:
+                if get_round_num() > 150 and robot_type % 2 == 1:
                     robot_state = RobotState.ATTACKING
                 else:
                     robot_state = RobotState.EXPLORING
@@ -557,6 +557,8 @@ def update_friendly_towers():
         # Add to our known towers array
         known_towers.append(ally_loc)
         set_indicator_string(f"Found tower {ally.get_id()}")
+    if get_round_num() % 7 == 0:
+        should_save = False
 
 
 def check_nearby_ruins():
