@@ -69,10 +69,6 @@ mopper_cooldown = 0
 defending_turns = 20
 waiting_turns = 3
 
-# A* pathfinding variables
-cached_path = []
-path_index = 1
-path_target = None
 
 def turn():
     global paint_tower_pattern, money_tower_pattern
@@ -98,7 +94,7 @@ def turn():
     elif get_type() == UnitType.MOPPER:
         run_mopper() # TODO
     elif get_type() == UnitType.SPLASHER:
-        pass  # TODO
+        pass
     elif get_type().is_tower_type():
         run_tower()
     else:
@@ -140,7 +136,7 @@ def run_tower():
         next_loc = get_location().add(dir)
 
         # Pick a random robot type to build.
-        robot_type = random.randint(0, 6)
+        robot_type = random.randint(0, 10)
 
         if create_mopper == True and can_build_robot(UnitType.MOPPER, next_loc):
             create_mopper = False
@@ -148,7 +144,7 @@ def run_tower():
             if can_send_message(next_loc):
                 send_message(next_loc, int(MessageType.DEFEND))
         elif create_mopper == False:
-            if (robot_type <= 5 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
+            if (robot_type <= 7 or get_round_num() < 1000) and can_build_robot(UnitType.SOLDIER, next_loc):
                 build_robot(UnitType.SOLDIER, next_loc) 
                 if get_round_num() > 150 and robot_type % 2 == 1:
                     robot_state = RobotState.ATTACKING
@@ -157,9 +153,12 @@ def run_tower():
                 if can_send_message(next_loc):
                     send_message(next_loc, combine_bytes(255, 0, 0, int(robot_state)))
                 log("BUILT A SOLDIER")
-            elif robot_type == 6 and can_build_robot(UnitType.MOPPER, next_loc) and get_round_num() > 1000:
+            elif robot_type <= 9 and can_build_robot(UnitType.MOPPER, next_loc) and get_round_num() > 1000:
                 build_robot(UnitType.MOPPER, next_loc)
                 log("BUILT A MOPPER")
+            elif robot_type == 10 and can_build_robot(UnitType.SPLASHER, next_loc):
+                build_robot(UnitType.SPLASHER, next_loc)
+                
         # if robot_type == 2 and can_build_robot(UnitType.SPLASHER, next_loc):
         #     set_indicator_string("SPLASHER NOT IMPLEMENTED YET")
         #     #build_robot(RobotType.SPLASHER, next_loc)
@@ -352,26 +351,14 @@ def run_soldier():
                 painting_ruin_loc = cur_ruin.get_map_location()
 
         else:
-            # dir = random.choice(directions)
-            # next_loc = get_location().add(dir)
-            # if can_move(dir):
-            #     move(dir)
             if can_move(moving_direction):
                 move(moving_direction)
             else:
                 bug2(get_location().add(moving_direction).add(moving_direction).add(moving_direction))
-                # If we can't move in the current direction, try to turn
-                # local_direction = moving_direction
-                # local_direction2 = moving_direction
-                # for i in range(3):
-                #     local_direction = local_direction.rotate_left()
-                #     local_direction2 = local_direction2.rotate_right()
-                #     if can_move(local_direction):
-                #         move(local_direction)
-                #         break
-                #     if can_move(local_direction2):
-                #         move(local_direction2)
-                #         break
+                map_height = get_map_height()
+                map_width = get_map_width()
+                if get_location().x <= 1 or get_location().x >= map_width - 2 or get_location().y <= 1 or get_location().y >= map_height - 2:
+                    moving_direction = moving_direction.opposite()
             current_tile = sense_map_info(get_location())
             if not current_tile.get_paint().is_ally() and can_attack(get_location()):
                 attack(get_location())
@@ -513,15 +500,28 @@ def run_mopper():
         moving_turns -= 1
     else:
         bug2(get_location().add(moving_direction).add(moving_direction).add(moving_direction))
+    
+    flag = False
+    for dir in directions:
+        if not can_move(dir):
+            continue
+        isEnemyTile = sense_map_info(get_location().add(dir)).get_paint().is_enemy()
+        if isEnemyTile:
+            # If we are on an enemy tile, try to mop it
+            if can_mop_swing(dir):
+                mop_swing(dir)
+            elif can_attack(get_location().add(dir)):
+                attack(get_location().add(dir))
+            flag = True
+            break
+    
+    if not flag:
+        dir = random.choice(directions)
+        if can_mop_swing(dir):
+            mop_swing(dir)
+        if can_move(dir):
+            move(dir)
 
-    dir = directions[random.randint(0, len(directions) - 1)]
-    next_loc = get_location().add(dir)
-    if can_move(dir):
-        move(dir)
-    if can_attack(next_loc):
-        attack(next_loc)
-    elif can_mop_swing(dir):
-        mop_swing(dir)
 
     # We can also move our code into different methods or classes to better organize it!
     update_enemy_robots()
@@ -740,8 +740,6 @@ def update_walls_set():
         if map_info.is_wall():
             walls_set.add(loc)
 
-from aStar import greedy_best_first
-
 def move_to_target(target):
     global cached_path, path_index, path_target, walls_set, occupied_set
 
@@ -749,7 +747,6 @@ def move_to_target(target):
 
     if cached_path is None or path_index % 4 == 0 or path_target is None or path_target != target:
         update_walls_set()
-        cached_path = greedy_best_first(get_location(), target, walls_set, occupied_set)
         path_target = target
         path_index = 0
 
